@@ -4,15 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       DEVICE_CODES:
-        description: "Device codes (comma-separated), e.g. SM-G986B, SM-N986B"
+        description: "Device codes (comma-separated)"
         required: true
         type: string
       RECOVERY_URL:
-        description: "Direct link to recovery.img or tar containing it"
+        description: "Link to recovery.img or tar"
         required: true
         type: string
       VBMETA_URL:
-        description: "Direct link to vbmeta.tar or vbmeta.img"
+        description: "Link to vbmeta.img or tar"
         required: true
         type: string
 
@@ -21,85 +21,73 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Prepare workspace
+      - name: Create workspace
         run: mkdir work
 
-      - name: Download recovery
+      - name: Download files
         run: |
           cd work
           wget -O recovery_download "${{ github.event.inputs.RECOVERY_URL }}"
-
-      - name: Download vbmeta
-        run: |
-          cd work
           wget -O vbmeta_download "${{ github.event.inputs.VBMETA_URL }}"
 
-      - name: Extract recovery if needed and rename
+      - name: Extract recovery safely
         run: |
           cd work
-          if file recovery_download | grep -qi "tar"; then
+          if tar -tf recovery_download > /dev/null 2>&1; then
             mkdir rec_extract
             tar -xf recovery_download -C rec_extract
-            REC_FILE=$(find rec_extract -type f | head -n1)
-            cp "$REC_FILE" recovery.img
+            REC=$(find rec_extract -type f | head -n 1)
+            cp "$REC" recovery.img
           else
             cp recovery_download recovery.img
           fi
 
-      - name: Extract vbmeta if needed and rename
+      - name: Extract vbmeta safely
         run: |
           cd work
-          if file vbmeta_download | grep -qi "tar"; then
+          if tar -tf vbmeta_download > /dev/null 2>&1; then
             mkdir vbm_extract
             tar -xf vbmeta_download -C vbm_extract
-            VBM_FILE=$(find vbm_extract -type f | head -n1)
-            cp "$VBM_FILE" vbmeta.img
+            VBM=$(find vbm_extract -type f | head -n 1)
+            cp "$VBM" vbmeta.img
           else
             cp vbmeta_download vbmeta.img
           fi
 
-      - name: Generate naming components
-        id: genname
+      - name: Create Name Tag
+        id: name
         run: |
-          DEVICE_CODES="${{ github.event.inputs.DEVICE_CODES }}"
-          DEVICE_CODES_CLEAN=$(echo "$DEVICE_CODES" | tr -d ' ')
-          IFS=',' read -r -a DEV_ARRAY <<< "$DEVICE_CODES_CLEAN"
+          RAW="${{ github.event.inputs.DEVICE_CODES }}"
+          CLEAN=$(echo "$RAW" | tr ',' '\n' | sed 's/ //g' | sed '/^$/d')
+          array=($CLEAN)
+
           DATE=$(date +%Y%m%d)
 
-          # Build tar filename
-          if [ ${#DEV_ARRAY[@]} -eq 1 ]; then
-            OUTNAME="ArtisanROM-${DEV_ARRAY[0]}-$DATE.tar"
-          else
-            JOINED=$(printf "-%s" "${DEV_ARRAY[@]}")
-            JOINED=${JOINED:1}
-            OUTNAME="ArtisanROM-$JOINED-$DATE.tar"
-          fi
+          DEV_TAG=$(printf "%s-" "${array[@]}")
+          DEV_TAG=${DEV_TAG%-}   # remove last dash
 
-          # Device codes for tag (hyphen-joined)
-          DEV_TAG=$(printf "-%s" "${DEV_ARRAY[@]}")
-          DEV_TAG=${DEV_TAG:1}
+          TAR_NAME="ArtisanROM-${DEV_TAG// /-}-$DATE.tar"
 
-          echo "OUTNAME=$OUTNAME" >> $GITHUB_OUTPUT
+          echo "TAR_NAME=$TAR_NAME" >> $GITHUB_OUTPUT
           echo "DATE=$DATE" >> $GITHUB_OUTPUT
-          echo "DEVLIST=${DEVICE_CODES_CLEAN}" >> $GITHUB_OUTPUT
-          echo "DEVTAG=$DEV_TAG" >> $GITHUB_OUTPUT
+          echo "DEVS=$RAW" >> $GITHUB_OUTPUT
+          echo "TAGDEVS=$DEV_TAG" >> $GITHUB_OUTPUT
 
-      - name: Create final OdinPack
+      - name: Create OdinPack
         run: |
           cd work
-          tar -cf "${{ steps.genname.outputs.OUTNAME }}" recovery.img vbmeta.img
+          tar -cf "${{ steps.name.outputs.TAR_NAME }}" recovery.img vbmeta.img
 
-      - name: Create GitHub Release
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "artisanrom-${{ steps.genname.outputs.DATE }}-${{ steps.genname.outputs.DEVTAG }}"
-          name: "ArtisanROM Build - ${{ steps.genname.outputs.DATE }}"
+          tag_name: "artisanrom-${{ steps.name.outputs.DATE }}-${{ steps.name.outputs.TAGDEVS }}"
+          name: "ArtisanROM Build - ${{ steps.name.outputs.DATE }}"
           body: |
-            **Devices included in this build:**
-            ${{ steps.genname.outputs.DEVLIST }}
-          files: work/${{ steps.genname.outputs.OUTNAME }}
+            **Devices in this build:**
+            ${{ steps.name.outputs.DEVS }}
+          files: work/${{ steps.name.outputs.TAR_NAME }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
