@@ -1,0 +1,105 @@
+name: OdinPack Builder
+
+on:
+  workflow_dispatch:
+    inputs:
+      DEVICE_CODES:
+        description: "Device codes (comma-separated), e.g. SM-G986B, SM-N986B"
+        required: true
+        type: string
+      RECOVERY_URL:
+        description: "Direct link to recovery.img or tar containing it"
+        required: true
+        type: string
+      VBMETA_URL:
+        description: "Direct link to vbmeta.tar or vbmeta.img"
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare workspace
+        run: mkdir work
+
+      - name: Download recovery
+        run: |
+          cd work
+          wget -O recovery_download "${{ github.event.inputs.RECOVERY_URL }}"
+
+      - name: Download vbmeta
+        run: |
+          cd work
+          wget -O vbmeta_download "${{ github.event.inputs.VBMETA_URL }}"
+
+      - name: Extract recovery if needed and rename
+        run: |
+          cd work
+          if file recovery_download | grep -qi "tar"; then
+            mkdir rec_extract
+            tar -xf recovery_download -C rec_extract
+            REC_FILE=$(find rec_extract -type f | head -n1)
+            cp "$REC_FILE" recovery.img
+          else
+            cp recovery_download recovery.img
+          fi
+
+      - name: Extract vbmeta if needed and rename
+        run: |
+          cd work
+          if file vbmeta_download | grep -qi "tar"; then
+            mkdir vbm_extract
+            tar -xf vbmeta_download -C vbm_extract
+            VBM_FILE=$(find vbm_extract -type f | head -n1)
+            cp "$VBM_FILE" vbmeta.img
+          else
+            cp vbmeta_download vbmeta.img
+          fi
+
+      - name: Generate naming components
+        id: genname
+        run: |
+          DEVICE_CODES="${{ github.event.inputs.DEVICE_CODES }}"
+          DEVICE_CODES_CLEAN=$(echo "$DEVICE_CODES" | tr -d ' ')
+          IFS=',' read -r -a DEV_ARRAY <<< "$DEVICE_CODES_CLEAN"
+          DATE=$(date +%Y%m%d)
+
+          # Build tar filename
+          if [ ${#DEV_ARRAY[@]} -eq 1 ]; then
+            OUTNAME="ArtisanROM-${DEV_ARRAY[0]}-$DATE.tar"
+          else
+            JOINED=$(printf "-%s" "${DEV_ARRAY[@]}")
+            JOINED=${JOINED:1}
+            OUTNAME="ArtisanROM-$JOINED-$DATE.tar"
+          fi
+
+          # Device codes for tag (hyphen-joined)
+          DEV_TAG=$(printf "-%s" "${DEV_ARRAY[@]}")
+          DEV_TAG=${DEV_TAG:1}
+
+          echo "OUTNAME=$OUTNAME" >> $GITHUB_OUTPUT
+          echo "DATE=$DATE" >> $GITHUB_OUTPUT
+          echo "DEVLIST=${DEVICE_CODES_CLEAN}" >> $GITHUB_OUTPUT
+          echo "DEVTAG=$DEV_TAG" >> $GITHUB_OUTPUT
+
+      - name: Create final OdinPack
+        run: |
+          cd work
+          tar -cf "${{ steps.genname.outputs.OUTNAME }}" recovery.img vbmeta.img
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "artisanrom-${{ steps.genname.outputs.DATE }}-${{ steps.genname.outputs.DEVTAG }}"
+          name: "ArtisanROM Build - ${{ steps.genname.outputs.DATE }}"
+          body: |
+            **Devices included in this build:**
+            ${{ steps.genname.outputs.DEVLIST }}
+          files: work/${{ steps.genname.outputs.OUTNAME }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
