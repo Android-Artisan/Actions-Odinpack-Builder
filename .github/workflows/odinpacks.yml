@@ -18,24 +18,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
 
-      - name: Make workspace
-        run: mkdir work
+      - uses: actions/checkout@v4
 
-      - name: Download recovery + vbmeta
+      - name: Download files
         run: |
-          cd work
           wget -O recovery_file "${{ github.event.inputs.RECOVERY_URL }}"
           wget -O vbmeta_file "${{ github.event.inputs.VBMETA_URL }}"
 
       - name: Process recovery
         run: |
-          cd work
-          # If recovery URL ends in .tar, extract it
+          # If the URL ends with .tar, extract it
           if [[ "${{ github.event.inputs.RECOVERY_URL }}" == *.tar ]]; then
-            mkdir rec
-            tar -xf recovery_file -C rec || true
-            # Find any .img inside
-            REC=$(find rec -type f -name "*.img" | head -n1)
+            tar -xf recovery_file || true
+            REC=$(find . -maxdepth 1 -type f -name "*.img" | head -n1)
             cp "$REC" recovery.img
           else
             cp recovery_file recovery.img
@@ -43,17 +38,15 @@ jobs:
 
       - name: Process vbmeta
         run: |
-          cd work
           if [[ "${{ github.event.inputs.VBMETA_URL }}" == *.tar ]]; then
-            mkdir vbm
-            tar -xf vbmeta_file -C vbm || true
-            VBM=$(find vbm -type f -name "*.img" | head -n1)
+            tar -xf vbmeta_file || true
+            VBM=$(find . -maxdepth 1 -type f -name "*.img" ! -name "recovery.img" | head -n1)
             cp "$VBM" vbmeta.img
           else
             cp vbmeta_file vbmeta.img
           fi
 
-      - name: Build naming
+      - name: Generate names
         id: names
         run: |
           RAW="${{ github.event.inputs.DEVICE_CODES }}"
@@ -68,7 +61,6 @@ jobs:
 
       - name: Create final tar
         run: |
-          cd work
           tar -cf "${{ steps.names.outputs.tarfile }}" recovery.img vbmeta.img
 
       - name: Release
@@ -79,6 +71,6 @@ jobs:
           body: |
             Devices:
             ${{ steps.names.outputs.raw }}
-          files: work/${{ steps.names.outputs.tarfile }}
+          files: ${{ steps.names.outputs.tarfile }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
