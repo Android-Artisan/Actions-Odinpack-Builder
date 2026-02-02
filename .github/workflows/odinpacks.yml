@@ -4,83 +4,81 @@ on:
   workflow_dispatch:
     inputs:
       DEVICE_CODES:
-        description: "Device codes (comma-separated)"
         type: string
         required: true
       RECOVERY_URL:
-        description: "Link to recovery.img or tar"
         type: string
         required: true
       VBMETA_URL:
-        description: "Link to vbmeta.img or tar"
         type: string
         required: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
 
-      - uses: actions/checkout@v4
-
-      - name: Prep
+      - name: Make workspace
         run: mkdir work
 
-      - name: Download files
+      - name: Download recovery + vbmeta
         run: |
           cd work
-          wget -O recovery_download "${{ github.event.inputs.RECOVERY_URL }}"
-          wget -O vbmeta_download "${{ github.event.inputs.VBMETA_URL }}"
+          wget -O recovery_file "${{ github.event.inputs.RECOVERY_URL }}"
+          wget -O vbmeta_file "${{ github.event.inputs.VBMETA_URL }}"
 
-      - name: Extract recovery
+      - name: Process recovery
         run: |
           cd work
-          if tar -tf recovery_download > /dev/null 2>&1; then
-            tar -xf recovery_download
-            REC=$(find . -type f ! -name "*vbmeta*" | head -n1)
+          # If recovery URL ends in .tar, extract it
+          if [[ "${{ github.event.inputs.RECOVERY_URL }}" == *.tar ]]; then
+            mkdir rec
+            tar -xf recovery_file -C rec || true
+            # Find any .img inside
+            REC=$(find rec -type f -name "*.img" | head -n1)
             cp "$REC" recovery.img
           else
-            cp recovery_download recovery.img
+            cp recovery_file recovery.img
           fi
 
-      - name: Extract vbmeta
+      - name: Process vbmeta
         run: |
           cd work
-          if tar -tf vbmeta_download > /dev/null 2>&1; then
-            tar -xf vbmeta_download
-            VBM=$(find . -type f ! -name "*recovery*" | head -n1)
+          if [[ "${{ github.event.inputs.VBMETA_URL }}" == *.tar ]]; then
+            mkdir vbm
+            tar -xf vbmeta_file -C vbm || true
+            VBM=$(find vbm -type f -name "*.img" | head -n1)
             cp "$VBM" vbmeta.img
           else
-            cp vbmeta_download vbmeta.img
+            cp vbmeta_file vbmeta.img
           fi
 
-      - name: Generate names
-        id: namegen
+      - name: Build naming
+        id: names
         run: |
-          DEVCODES="${{ github.event.inputs.DEVICE_CODES }}"
-          DEVCODES_CLEAN=$(echo "$DEVCODES" | tr -d ' ' | tr ',' '-')
+          RAW="${{ github.event.inputs.DEVICE_CODES }}"
+          CLEAN=$(echo "$RAW" | tr -d ' ' | tr ',' '-')
           DATE=$(date +%Y%m%d)
-          TARFILE="ArtisanROM-${DEVCODES_CLEAN}-${DATE}.tar"
+          TAR="ArtisanROM-${CLEAN}-${DATE}.tar"
 
-          echo "TARFILE=$TARFILE" >> $GITHUB_OUTPUT
-          echo "DATE=$DATE" >> $GITHUB_OUTPUT
-          echo "DEVCODES_CLEAN=$DEVCODES_CLEAN" >> $GITHUB_OUTPUT
-          echo "DEVCODES_RAW=${{ github.event.inputs.DEVICE_CODES }}" >> $GITHUB_OUTPUT
+          echo "tarfile=$TAR" >> $GITHUB_OUTPUT
+          echo "raw=$RAW" >> $GITHUB_OUTPUT
+          echo "clean=$CLEAN" >> $GITHUB_OUTPUT
+          echo "date=$DATE" >> $GITHUB_OUTPUT
 
-      - name: Create OdinPack
+      - name: Create final tar
         run: |
           cd work
-          tar -cf "${{ steps.namegen.outputs.TARFILE }}" recovery.img vbmeta.img
+          tar -cf "${{ steps.names.outputs.tarfile }}" recovery.img vbmeta.img
 
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "artisanrom-${{ steps.namegen.outputs.DATE }}-${{ steps.namegen.outputs.DEVCODES_CLEAN }}"
-          name: "ArtisanROM Build - ${{ steps.namegen.outputs.DATE }}"
+          tag_name: "artisanrom-${{ steps.names.outputs.clean }}-${{ steps.names.outputs.date }}"
+          name: "ArtisanROM Build ${{ steps.names.outputs.date }}"
           body: |
             Devices:
-            ${{ steps.namegen.outputs.DEVCODES_RAW }}
-          files: work/${{ steps.namegen.outputs.TARFILE }}
+            ${{ steps.names.outputs.raw }}
+          files: work/${{ steps.names.outputs.tarfile }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
