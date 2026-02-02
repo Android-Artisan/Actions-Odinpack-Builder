@@ -5,25 +5,26 @@ on:
     inputs:
       DEVICE_CODES:
         description: "Device codes (comma-separated)"
-        required: true
         type: string
+        required: true
       RECOVERY_URL:
         description: "Link to recovery.img or tar"
-        required: true
         type: string
+        required: true
       VBMETA_URL:
         description: "Link to vbmeta.img or tar"
-        required: true
         type: string
+        required: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
+
       - uses: actions/checkout@v4
 
-      - name: Create workspace
+      - name: Prep
         run: mkdir work
 
       - name: Download files
@@ -32,62 +33,54 @@ jobs:
           wget -O recovery_download "${{ github.event.inputs.RECOVERY_URL }}"
           wget -O vbmeta_download "${{ github.event.inputs.VBMETA_URL }}"
 
-      - name: Extract recovery safely
+      - name: Extract recovery
         run: |
           cd work
           if tar -tf recovery_download > /dev/null 2>&1; then
-            mkdir rec_extract
-            tar -xf recovery_download -C rec_extract
-            REC=$(find rec_extract -type f | head -n 1)
+            tar -xf recovery_download
+            REC=$(find . -type f ! -name "*vbmeta*" | head -n1)
             cp "$REC" recovery.img
           else
             cp recovery_download recovery.img
           fi
 
-      - name: Extract vbmeta safely
+      - name: Extract vbmeta
         run: |
           cd work
           if tar -tf vbmeta_download > /dev/null 2>&1; then
-            mkdir vbm_extract
-            tar -xf vbmeta_download -C vbm_extract
-            VBM=$(find vbm_extract -type f | head -n 1)
+            tar -xf vbmeta_download
+            VBM=$(find . -type f ! -name "*recovery*" | head -n1)
             cp "$VBM" vbmeta.img
           else
             cp vbmeta_download vbmeta.img
           fi
 
-      - name: Create Name Tag
-        id: name
+      - name: Generate names
+        id: namegen
         run: |
-          RAW="${{ github.event.inputs.DEVICE_CODES }}"
-          CLEAN=$(echo "$RAW" | tr ',' '\n' | sed 's/ //g' | sed '/^$/d')
-          array=($CLEAN)
-
+          DEVCODES="${{ github.event.inputs.DEVICE_CODES }}"
+          DEVCODES_CLEAN=$(echo "$DEVCODES" | tr -d ' ' | tr ',' '-')
           DATE=$(date +%Y%m%d)
+          TARFILE="ArtisanROM-${DEVCODES_CLEAN}-${DATE}.tar"
 
-          DEV_TAG=$(printf "%s-" "${array[@]}")
-          DEV_TAG=${DEV_TAG%-}   # remove last dash
-
-          TAR_NAME="ArtisanROM-${DEV_TAG// /-}-$DATE.tar"
-
-          echo "TAR_NAME=$TAR_NAME" >> $GITHUB_OUTPUT
+          echo "TARFILE=$TARFILE" >> $GITHUB_OUTPUT
           echo "DATE=$DATE" >> $GITHUB_OUTPUT
-          echo "DEVS=$RAW" >> $GITHUB_OUTPUT
-          echo "TAGDEVS=$DEV_TAG" >> $GITHUB_OUTPUT
+          echo "DEVCODES_CLEAN=$DEVCODES_CLEAN" >> $GITHUB_OUTPUT
+          echo "DEVCODES_RAW=${{ github.event.inputs.DEVICE_CODES }}" >> $GITHUB_OUTPUT
 
       - name: Create OdinPack
         run: |
           cd work
-          tar -cf "${{ steps.name.outputs.TAR_NAME }}" recovery.img vbmeta.img
+          tar -cf "${{ steps.namegen.outputs.TARFILE }}" recovery.img vbmeta.img
 
-      - name: Create Release
+      - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "artisanrom-${{ steps.name.outputs.DATE }}-${{ steps.name.outputs.TAGDEVS }}"
-          name: "ArtisanROM Build - ${{ steps.name.outputs.DATE }}"
+          tag_name: "artisanrom-${{ steps.namegen.outputs.DATE }}-${{ steps.namegen.outputs.DEVCODES_CLEAN }}"
+          name: "ArtisanROM Build - ${{ steps.namegen.outputs.DATE }}"
           body: |
-            **Devices in this build:**
-            ${{ steps.name.outputs.DEVS }}
-          files: work/${{ steps.name.outputs.TAR_NAME }}
+            Devices:
+            ${{ steps.namegen.outputs.DEVCODES_RAW }}
+          files: work/${{ steps.namegen.outputs.TARFILE }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
